@@ -152,6 +152,7 @@ macro_rules! read_lenenc_str {
     }};
 }
 
+pub mod binlog;
 pub mod constants;
 pub mod crypto;
 pub mod io;

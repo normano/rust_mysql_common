@@ -6,6 +6,8 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
+use std::convert::TryFrom;
+
 pub static MAX_PAYLOAD_LEN: usize = 16_777_215;
 pub static DEFAULT_MAX_ALLOWED_PACKET: usize = 4 * 1024 * 1024;
 pub static MIN_COMPRESS_LENGTH: usize = 50;
@@ -462,40 +464,121 @@ pub enum ColumnType {
     MYSQL_TYPE_GEOMETRY = 255,
 }
 
-impl From<u8> for ColumnType {
-    fn from(x: u8) -> ColumnType {
-        match x {
-            0x00_u8 => ColumnType::MYSQL_TYPE_DECIMAL,
-            0x01_u8 => ColumnType::MYSQL_TYPE_TINY,
-            0x02_u8 => ColumnType::MYSQL_TYPE_SHORT,
-            0x03_u8 => ColumnType::MYSQL_TYPE_LONG,
-            0x04_u8 => ColumnType::MYSQL_TYPE_FLOAT,
-            0x05_u8 => ColumnType::MYSQL_TYPE_DOUBLE,
-            0x06_u8 => ColumnType::MYSQL_TYPE_NULL,
-            0x07_u8 => ColumnType::MYSQL_TYPE_TIMESTAMP,
-            0x08_u8 => ColumnType::MYSQL_TYPE_LONGLONG,
-            0x09_u8 => ColumnType::MYSQL_TYPE_INT24,
-            0x0a_u8 => ColumnType::MYSQL_TYPE_DATE,
-            0x0b_u8 => ColumnType::MYSQL_TYPE_TIME,
-            0x0c_u8 => ColumnType::MYSQL_TYPE_DATETIME,
-            0x0d_u8 => ColumnType::MYSQL_TYPE_YEAR,
-            0x0f_u8 => ColumnType::MYSQL_TYPE_VARCHAR,
-            0x10_u8 => ColumnType::MYSQL_TYPE_BIT,
-            0x11_u8 => ColumnType::MYSQL_TYPE_TIMESTAMP2,
-            0x12_u8 => ColumnType::MYSQL_TYPE_DATETIME2,
-            0x13_u8 => ColumnType::MYSQL_TYPE_TIME2,
-            0xf5_u8 => ColumnType::MYSQL_TYPE_JSON,
-            0xf6_u8 => ColumnType::MYSQL_TYPE_NEWDECIMAL,
-            0xf7_u8 => ColumnType::MYSQL_TYPE_ENUM,
-            0xf8_u8 => ColumnType::MYSQL_TYPE_SET,
-            0xf9_u8 => ColumnType::MYSQL_TYPE_TINY_BLOB,
-            0xfa_u8 => ColumnType::MYSQL_TYPE_MEDIUM_BLOB,
-            0xfb_u8 => ColumnType::MYSQL_TYPE_LONG_BLOB,
-            0xfc_u8 => ColumnType::MYSQL_TYPE_BLOB,
-            0xfd_u8 => ColumnType::MYSQL_TYPE_VAR_STRING,
-            0xfe_u8 => ColumnType::MYSQL_TYPE_STRING,
-            0xff_u8 => ColumnType::MYSQL_TYPE_GEOMETRY,
-            _ => panic!("Unknown column type {}", x),
+impl TryFrom<u8> for ColumnType {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00_u8 => Ok(ColumnType::MYSQL_TYPE_DECIMAL),
+            0x01_u8 => Ok(ColumnType::MYSQL_TYPE_TINY),
+            0x02_u8 => Ok(ColumnType::MYSQL_TYPE_SHORT),
+            0x03_u8 => Ok(ColumnType::MYSQL_TYPE_LONG),
+            0x04_u8 => Ok(ColumnType::MYSQL_TYPE_FLOAT),
+            0x05_u8 => Ok(ColumnType::MYSQL_TYPE_DOUBLE),
+            0x06_u8 => Ok(ColumnType::MYSQL_TYPE_NULL),
+            0x07_u8 => Ok(ColumnType::MYSQL_TYPE_TIMESTAMP),
+            0x08_u8 => Ok(ColumnType::MYSQL_TYPE_LONGLONG),
+            0x09_u8 => Ok(ColumnType::MYSQL_TYPE_INT24),
+            0x0a_u8 => Ok(ColumnType::MYSQL_TYPE_DATE),
+            0x0b_u8 => Ok(ColumnType::MYSQL_TYPE_TIME),
+            0x0c_u8 => Ok(ColumnType::MYSQL_TYPE_DATETIME),
+            0x0d_u8 => Ok(ColumnType::MYSQL_TYPE_YEAR),
+            0x0f_u8 => Ok(ColumnType::MYSQL_TYPE_VARCHAR),
+            0x10_u8 => Ok(ColumnType::MYSQL_TYPE_BIT),
+            0x11_u8 => Ok(ColumnType::MYSQL_TYPE_TIMESTAMP2),
+            0x12_u8 => Ok(ColumnType::MYSQL_TYPE_DATETIME2),
+            0x13_u8 => Ok(ColumnType::MYSQL_TYPE_TIME2),
+            0xf5_u8 => Ok(ColumnType::MYSQL_TYPE_JSON),
+            0xf6_u8 => Ok(ColumnType::MYSQL_TYPE_NEWDECIMAL),
+            0xf7_u8 => Ok(ColumnType::MYSQL_TYPE_ENUM),
+            0xf8_u8 => Ok(ColumnType::MYSQL_TYPE_SET),
+            0xf9_u8 => Ok(ColumnType::MYSQL_TYPE_TINY_BLOB),
+            0xfa_u8 => Ok(ColumnType::MYSQL_TYPE_MEDIUM_BLOB),
+            0xfb_u8 => Ok(ColumnType::MYSQL_TYPE_LONG_BLOB),
+            0xfc_u8 => Ok(ColumnType::MYSQL_TYPE_BLOB),
+            0xfd_u8 => Ok(ColumnType::MYSQL_TYPE_VAR_STRING),
+            0xfe_u8 => Ok(ColumnType::MYSQL_TYPE_STRING),
+            0xff_u8 => Ok(ColumnType::MYSQL_TYPE_GEOMETRY),
+            _ => Err(value),
+        }
+    }
+}
+
+bitflags! {
+    /// Bitmask of flags that are usually set with `SET`.
+    pub struct Flags2: u32 {
+        const OPTION_AUTO_IS_NULL          = 0x00004000;
+        const OPTION_NOT_AUTOCOMMIT        = 0x00080000;
+        const OPTION_NO_FOREIGN_KEY_CHECKS = 0x04000000;
+        const OPTION_RELAXED_UNIQUE_CHECKS = 0x08000000;
+    }
+}
+
+bitflags! {
+    /// Bitmask of flags that are usually set with `SET sql_mode`.
+    pub struct SqlMode: u64 {
+        const MODE_REAL_AS_FLOAT              = 0x00000001;
+        const MODE_PIPES_AS_CONCAT            = 0x00000002;
+        const MODE_ANSI_QUOTES                = 0x00000004;
+        const MODE_IGNORE_SPACE               = 0x00000008;
+        const MODE_NOT_USED                   = 0x00000010;
+        const MODE_ONLY_FULL_GROUP_BY         = 0x00000020;
+        const MODE_NO_UNSIGNED_SUBTRACTION    = 0x00000040;
+        const MODE_NO_DIR_IN_CREATE           = 0x00000080;
+        const MODE_POSTGRESQL                 = 0x00000100;
+        const MODE_ORACLE                     = 0x00000200;
+        const MODE_MSSQL                      = 0x00000400;
+        const MODE_DB2                        = 0x00000800;
+        const MODE_MAXDB                      = 0x00001000;
+        const MODE_NO_KEY_OPTIONS             = 0x00002000;
+        const MODE_NO_FIELD_OPTIONS           = 0x00008000;
+        const MODE_NO_TABLE_OPTIONS           = 0x00004000;
+        const MODE_MYSQL40                    = 0x00020000;
+        const MODE_MYSQL323                   = 0x00010000;
+        const MODE_ANSI                       = 0x00040000;
+        const MODE_NO_AUTO_VALUE_ON_ZERO      = 0x00080000;
+        const MODE_NO_BACKSLASH_ESCAPES       = 0x00100000;
+        const MODE_STRICT_TRANS_TABLES        = 0x00200000;
+        const MODE_STRICT_ALL_TABLES          = 0x00400000;
+        const MODE_NO_ZERO_IN_DATE            = 0x00800000;
+        const MODE_NO_ZERO_DATE               = 0x01000000;
+        const MODE_INVALID_DATES              = 0x02000000;
+        const MODE_ERROR_FOR_DIVISION_BY_ZERO = 0x04000000;
+        const MODE_TRADITIONAL                = 0x08000000;
+        const MODE_NO_AUTO_CREATE_USER        = 0x10000000;
+        const MODE_HIGH_NOT_PRECEDENCE        = 0x20000000;
+        const MODE_NO_ENGINE_SUBSTITUTION     = 0x40000000;
+        const MODE_PAD_CHAR_TO_FULL_LENGTH    = 0x80000000;
+        const MODE_TIME_TRUNCATE_FRACTIONAL   = 0x100000000;
+        const MODE_LAST                       = 0x200000000;
+    }
+}
+
+/// Type of the user defined function return slot and arguments.
+#[repr(i8)]
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum ItemResult {
+    INVALID_RESULT = -1,
+    STRING_RESULT = 0,
+    REAL_RESULT,
+    INT_RESULT,
+    ROW_RESULT,
+    DECIMAL_RESULT,
+}
+
+impl TryFrom<i8> for ItemResult {
+    type Error = i8;
+
+    fn try_from(value: i8) -> Result<Self, Self::Error> {
+        match value {
+            -1 => Ok(ItemResult::INVALID_RESULT),
+            0 => Ok(ItemResult::STRING_RESULT),
+            1 => Ok(ItemResult::REAL_RESULT),
+            2 => Ok(ItemResult::INT_RESULT),
+            3 => Ok(ItemResult::ROW_RESULT),
+            4 => Ok(ItemResult::DECIMAL_RESULT),
+            x => Err(x),
         }
     }
 }

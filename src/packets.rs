@@ -10,7 +10,10 @@ use byteorder::{ByteOrder, LittleEndian as LE, ReadBytesExt, WriteBytesExt};
 use lexical::parse;
 use regex::bytes::Regex;
 
-use std::{borrow::Cow, cmp::max, collections::HashMap, fmt, io, marker::PhantomData, ptr};
+use std::{
+    borrow::Cow, cmp::max, collections::HashMap, convert::TryFrom, fmt, io, marker::PhantomData,
+    ptr,
+};
 
 use crate::{
     constants::{
@@ -96,7 +99,8 @@ impl Column {
             column_length,
             character_set,
             flags: ColumnFlags::from_bits_truncate(flags),
-            column_type: ColumnType::from(column_type),
+            column_type: ColumnType::try_from(column_type)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid column type"))?,
             decimals,
         })
     }
