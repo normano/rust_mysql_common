@@ -428,7 +428,7 @@ impl From<u8> for SessionStateType {
 
 /// Type of MySql column field
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 #[repr(u8)]
 pub enum ColumnType {
     MYSQL_TYPE_DECIMAL = 0,
@@ -504,7 +504,9 @@ impl TryFrom<u8> for ColumnType {
     }
 }
 
-bitflags! {
+my_bitflags! {
+    Flags2, u32,
+
     /// Bitmask of flags that are usually set with `SET`.
     pub struct Flags2: u32 {
         const OPTION_AUTO_IS_NULL          = 0x00004000;
@@ -514,7 +516,9 @@ bitflags! {
     }
 }
 
-bitflags! {
+my_bitflags! {
+    SqlMode, u64,
+
     /// Bitmask of flags that are usually set with `SET sql_mode`.
     pub struct SqlMode: u64 {
         const MODE_REAL_AS_FLOAT              = 0x00000001;
