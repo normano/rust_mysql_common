@@ -131,7 +131,7 @@ impl Value {
     pub fn bin_len(&self) -> usize {
         match self {
             Value::NULL => 0,
-            Value::Bytes(x) => lenenc_int_len(x.len()) + x.len(),
+            Value::Bytes(x) => lenenc_int_len(x.len() as u64) + x.len(),
             Value::Int(_) => 8,
             Value::UInt(_) => 8,
             Value::Float(_) => 4,

@@ -14,7 +14,7 @@ use std::{
 };
 
 /// Returns length of length-encoded-integer representation of `x`.
-pub fn lenenc_int_len(x: usize) -> usize {
+pub fn lenenc_int_len(x: u64) -> usize {
     if x < 251 {
         1
     } else if x < 65_536 {
@@ -34,7 +34,7 @@ pub fn lenenc_str_len(s: &str) -> usize {
 /// Returns length of lenght-encoded-string representation of `s`.
 pub fn lenenc_bytes_len(s: &[u8]) -> usize {
     let len = s.len();
-    lenenc_int_len(len) + len
+    lenenc_int_len(len as u64) + len
 }
 
 /// Splits server 'version' string into three numeric pieces.
