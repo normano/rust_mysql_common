@@ -1987,16 +1987,12 @@ impl ComBinlogDumpGtid {
         len += S(4); // binlog-filename-len
         len += S(min(u32::MAX as usize, self.filename.len())); // binlog-filename
         len += S(8); // binlog-pos
-        if self
-            .get_flags()
-            .contains(BinlogDumpFlags::BINLOG_THROUGH_GTID)
-        {
-            len += S(4); // data-size
-            len += S(min(
-                u32::MAX as usize,
-                self.sid_blocks.iter().map(SidBlock::len).sum(),
-            )); // data
-        }
+        len += S(4); // data-size
+        len += S(8); // n_sids
+        len += S(min(
+            u32::MAX as usize - 8,
+            self.sid_blocks.iter().map(SidBlock::len).sum(),
+        )); // data
 
         len.0
     }
@@ -2011,25 +2007,21 @@ impl ComBinlogDumpGtid {
         output.write_u32::<LE>(filename_len as u32)?;
         output.write_all(&self.filename[..filename_len])?;
         output.write_u64::<LE>(self.pos)?;
-        if self
-            .get_flags()
-            .contains(BinlogDumpFlags::BINLOG_THROUGH_GTID)
-        {
-            let n_sids = min(u32::MAX as usize, self.sid_blocks.len());
 
-            let mut data_len = S(4);
-            for block in &self.sid_blocks {
-                data_len += S(block.len());
-            }
+        let n_sids = min(u64::MAX as usize, self.sid_blocks.len());
 
-            output.write_u32::<LE>(data_len.0 as u32)?;
-            output.write_u32::<LE>(n_sids as u32)?;
+        let mut data_len = S(8);
+        for block in &self.sid_blocks {
+            data_len += S(block.len());
+        }
 
-            let mut output = output.limit(S(data_len.0));
+        output.write_u32::<LE>(data_len.0 as u32)?;
+        output.write_u64::<LE>(n_sids as u64)?;
 
-            for sid_block in &self.sid_blocks {
-                sid_block.write(&mut output)?;
-            }
+        let mut output = output.limit(S(data_len.0));
+
+        for sid_block in &self.sid_blocks {
+            sid_block.write(&mut output)?;
         }
 
         Ok(())
@@ -2056,17 +2048,14 @@ impl ComBinlogDumpGtid {
         input.read_exact(&mut filename)?;
         let pos = input.read_u64::<LE>()?;
         let mut sid_blocks = Vec::new();
-        if BinlogDumpFlags::from_bits_truncate(flags).contains(BinlogDumpFlags::BINLOG_THROUGH_GTID)
-        {
-            let data_len = input.read_u32::<LE>()? as usize;
-            if data_len > 0 {
-                let mut input = input.limit(S(data_len));
-                let n_sids = input.read_u32::<LE>()?;
-                for _ in 0..n_sids {
-                    input.get_limit();
-                    let block = SidBlock::read(&mut input)?;
-                    sid_blocks.push(block);
-                }
+        let data_len = input.read_u32::<LE>()? as usize;
+        if data_len > 0 {
+            let mut input = input.limit(S(data_len));
+            let n_sids = input.read_u64::<LE>()?;
+            for _ in 0..n_sids {
+                input.get_limit();
+                let block = SidBlock::read(&mut input)?;
+                sid_blocks.push(block);
             }
         }
 
@@ -2205,16 +2194,12 @@ mod test {
             let mut cmd = ComBinlogDumpGtid::new(server_id, filename).with_pos(pos);
             cmd.flags = flags;
 
-            if BinlogDumpFlags::from_bits_truncate(flags)
-                .contains(BinlogDumpFlags::BINLOG_THROUGH_GTID)
-            {
-                for i in 0..sid_blocks {
-                    let mut block = SidBlock::new([i as u8; 16]);
-                    for j in 0..i {
-                        block = block.with_interval((i, j));
-                    }
-                    cmd = cmd.with_sid_block(block);
+            for i in 0..sid_blocks {
+                let mut block = SidBlock::new([i as u8; 16]);
+                for j in 0..i {
+                    block = block.with_interval((i, j));
                 }
+                cmd = cmd.with_sid_block(block);
             }
 
             let mut output = Vec::new();
