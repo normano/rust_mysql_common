@@ -28,7 +28,7 @@ use crate::{
         MAX_PAYLOAD_LEN, UTF8MB4_GENERAL_CI, UTF8_GENERAL_CI,
     },
     io::{ReadMysqlExt, WriteMysqlExt},
-    misc::{lenenc_str_len, LimitRead, LimitWrite},
+    misc::{lenenc_str_len, LimitRead, LimitWrite, RawText},
     value::{ClientSide, SerializationSide, Value},
 };
 
@@ -39,7 +39,7 @@ macro_rules! get_offset_and_len {
     }};
 }
 
-lazy_static! {
+lazy_static::lazy_static! {
     static ref MARIADB_VERSION_RE: Regex =
         { Regex::new(r"^5.5.5-(\d{1,2})\.(\d{1,2})\.(\d{1,3})-MariaDB").unwrap() };
     static ref VERSION_RE: Regex = { Regex::new(r"^(\d{1,2})\.(\d{1,2})\.(\d{1,3})(.*)").unwrap() };
@@ -284,6 +284,8 @@ impl<'a> SessionStateInfo<'a> {
 pub enum OkPacketKind {
     /// This packet terminates a result set (text or binary).
     ResultSetTerminator,
+    /// This packet terminates a binlog network stream.
+    NetworkStreamTerminator,
     /// Ok packet that is not a result set terminator.
     Other,
 }
@@ -345,7 +347,8 @@ impl<'a> OkPacket<'a> {
                     info,
                     session_state_info,
                 )
-            } else if kind == OkPacketKind::ResultSetTerminator
+            } else if (kind == OkPacketKind::ResultSetTerminator
+                || kind == OkPacketKind::NetworkStreamTerminator)
                 && header == 0xFE
                 && payload.len() < 8
             {
@@ -1461,27 +1464,27 @@ impl Into<Vec<u8>> for ComStmtClose {
 /// with `COM_BINLOG_DUMP`.
 ///
 /// For serialization use `Into<Vec<u8>> for ComRegisterSlave` impl.
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ComRegisterSlave {
     /// The slaves server-id.
     pub server_id: u32,
     /// The host name or IP address of the slave to be reported to the master during slave
     /// registration. Usually empty.
-    pub hostname: Vec<u8>,
+    pub hostname: RawText,
     /// The account user name of the slave to be reported to the master during slave registration.
     /// Usually empty.
     ///
     /// # Note
     ///
     /// Serialization will truncate this value if length is greater than 255 bytes.
-    pub user: Vec<u8>,
+    pub user: RawText,
     /// The account password of the slave to be reported to the master during slave registration.
     /// Usually empty.
     ///
     /// # Note
     ///
     /// Serialization will truncate this value if length is greater than 255 bytes.
-    pub password: Vec<u8>,
+    pub password: RawText,
     /// The TCP/IP port number for connecting to the slave, to be reported to the master during
     /// slave registration. Usually empty.
     ///
@@ -1510,21 +1513,6 @@ impl ComRegisterSlave {
         }
     }
 
-    /// Returns `hostname` as a UTF-8 string (lossy converted).
-    pub fn get_hostname(&self) -> Cow<str> {
-        String::from_utf8_lossy(&self.hostname)
-    }
-
-    /// Returns `user` as a UTF-8 string (lossy converted).
-    pub fn get_user(&self) -> Cow<str> {
-        String::from_utf8_lossy(&self.user)
-    }
-
-    /// Returns `password` as a UTF-8 string (lossy converted).
-    pub fn get_password(&self) -> Cow<str> {
-        String::from_utf8_lossy(&self.password)
-    }
-
     /// Returns length of serialized instance (in bytes).
     pub fn len(&self) -> usize {
         let mut len = 0;
@@ -1532,11 +1520,11 @@ impl ComRegisterSlave {
         len += 1; // [15] COM_REGISTER_SLAVE
         len += 4; // server-id
         len += 1; // slaves hostname length
-        len += min(u8::MAX as usize, self.hostname.len()); // slaves hostname
+        len += min(u8::MAX as usize, self.hostname.0.len()); // slaves hostname
         len += 1; // slaves user len
-        len += min(u8::MAX as usize, self.user.len()); // slaves user
+        len += min(u8::MAX as usize, self.user.0.len()); // slaves user
         len += 1; // slaves password len
-        len += min(u8::MAX as usize, self.password.len()); // slaves password
+        len += min(u8::MAX as usize, self.password.0.len()); // slaves password
         len += 2; // slaves mysql-port
         len += 4; // replication rank
         len += 4; // master id
@@ -1546,18 +1534,18 @@ impl ComRegisterSlave {
 
     /// Writes this instance to the given stream.
     pub fn write<T: Write>(&self, mut output: T) -> io::Result<()> {
-        let hostname_len = min(u8::MAX as usize, self.hostname.len());
-        let user_len = min(u8::MAX as usize, self.user.len());
-        let password_len = min(u8::MAX as usize, self.password.len());
+        let hostname_len = min(u8::MAX as usize, self.hostname.0.len());
+        let user_len = min(u8::MAX as usize, self.user.0.len());
+        let password_len = min(u8::MAX as usize, self.password.0.len());
 
         output.write_u8(Command::COM_REGISTER_SLAVE as u8)?;
         output.write_u32::<LE>(self.server_id)?;
         output.write_u8(hostname_len as u8)?;
-        output.limit(S(hostname_len)).write_all(&self.hostname)?;
+        output.limit(S(hostname_len)).write_all(&self.hostname.0)?;
         output.write_u8(user_len as u8)?;
-        output.limit(S(user_len)).write_all(&self.user)?;
+        output.limit(S(user_len)).write_all(&self.user.0)?;
         output.write_u8(password_len as u8)?;
-        output.limit(S(password_len)).write_all(&self.password)?;
+        output.limit(S(password_len)).write_all(&self.password.0)?;
         output.write_u16::<LE>(self.port)?;
         output.write_u32::<LE>(self.replication_rank)?;
         output.write_u32::<LE>(self.master_id)?;
@@ -1591,27 +1579,13 @@ impl ComRegisterSlave {
 
         Ok(Self {
             server_id,
-            hostname,
-            user,
-            password,
+            hostname: RawText(hostname),
+            user: RawText(user),
+            password: RawText(password),
             port,
             replication_rank,
             master_id,
         })
-    }
-}
-
-impl fmt::Debug for ComRegisterSlave {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComRegisterSlave")
-            .field("server_id", &self.server_id)
-            .field("hostname", &self.get_hostname())
-            .field("user", &self.get_user())
-            .field("password", &self.get_password())
-            .field("port", &self.port)
-            .field("replication_rank", &self.replication_rank)
-            .field("master_id", &self.master_id)
-            .finish()
     }
 }
 
@@ -1707,7 +1681,9 @@ impl fmt::Debug for ComTableDump {
     }
 }
 
-bitflags! {
+my_bitflags! {
+    BinlogDumpFlags, u16,
+
     /// Empty flags of a `LoadEvent`.
     pub struct BinlogDumpFlags: u16 {
         /// If there is no more event to send a EOF_Packet instead of blocking the connection
@@ -1720,14 +1696,14 @@ bitflags! {
 /// Command to request a binlog-stream from the master starting a given position.
 ///
 /// For serialization use `Into<Vec<u8>> for ComBinlogDump` impl.
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ComBinlogDump {
     /// Position in the binlog-file to start the stream with (`0` by default).
     pub pos: u32,
     /// Command flags (empty by default).
     ///
-    /// This field contains raw value. Use `Self::get_flags` to parse it.
-    pub flags: u16,
+    /// Only `BINLOG_DUMP_NON_BLOCK` is supported for this command.
+    pub flags: BinlogDumpFlags,
     /// Server id of this slave.
     pub server_id: u32,
     /// Filename of the binlog on the master.
@@ -1739,12 +1715,12 @@ pub struct ComBinlogDump {
 
 impl ComBinlogDump {
     /// Creates new instance with default values for `pos` and `flags`.
-    pub fn new(server_id: u32, filename: Vec<u8>) -> Self {
+    pub fn new(server_id: u32) -> Self {
         Self {
             pos: 0,
-            flags: 0,
+            flags: BinlogDumpFlags::empty(),
             server_id,
-            filename,
+            filename: vec![],
         }
     }
 
@@ -1755,12 +1731,18 @@ impl ComBinlogDump {
 
     /// Returns parsed `flags` field with unknown bits truncated.
     pub fn get_flags(&self) -> BinlogDumpFlags {
-        BinlogDumpFlags::from_bits_truncate(self.flags)
+        self.flags
+    }
+
+    /// Defines filename for this instance.
+    pub fn with_filename(mut self, filename: Vec<u8>) -> Self {
+        self.filename = filename;
+        self
     }
 
     /// Defines flags for this instance.
     pub fn with_flags(mut self, flags: BinlogDumpFlags) -> Self {
-        self.flags = flags.bits();
+        self.flags = flags;
         self
     }
 
@@ -1787,7 +1769,7 @@ impl ComBinlogDump {
     pub fn write<T: Write>(&self, mut output: T) -> io::Result<()> {
         output.write_u8(Command::COM_BINLOG_DUMP as u8)?;
         output.write_u32::<LE>(self.pos)?;
-        output.write_u16::<LE>(self.flags)?;
+        output.write_u16::<LE>(self.flags.bits())?;
         output.write_u32::<LE>(self.server_id)?;
         output.write_all(&self.filename)?;
 
@@ -1816,28 +1798,10 @@ impl ComBinlogDump {
 
         Ok(Self {
             pos,
-            flags,
+            flags: BinlogDumpFlags::from_bits_truncate(flags),
             server_id,
             filename,
         })
-    }
-}
-
-impl fmt::Debug for ComBinlogDump {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComBinlogDump")
-            .field("pos", &self.pos)
-            .field("flags", &{
-                let flags = self.flags;
-                format!(
-                    "{:?} (Unknown flags: {:016b}",
-                    flags,
-                    self.flags & (u16::MAX ^ BinlogDumpFlags::all().bits())
-                )
-            })
-            .field("server_id", &self.server_id)
-            .field("filename", &self.get_filename())
-            .finish()
     }
 }
 
@@ -1912,10 +1876,10 @@ impl SidBlock {
 /// Command to request a binlog-stream from the master starting a given position.
 ///
 /// For serialization use `Into<Vec<u8>> for ComBinlogDumpGtid` impl.
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct ComBinlogDumpGtid {
     /// Command flags (empty by default).
-    pub flags: u16,
+    pub flags: BinlogDumpFlags,
     /// Server id of this slave.
     pub server_id: u32,
     /// Filename of the binlog on the master.
@@ -1933,18 +1897,19 @@ pub struct ComBinlogDumpGtid {
     ///
     /// # Note
     ///
-    /// Serialization will truncate serialized value if its length is greater than 2^32 - 1 bytes.
+    /// Serialization will return an error if lenght of a serialized value
+    /// is greater than 2^32 - 1 bytes.
     pub sid_blocks: Vec<SidBlock>,
 }
 
 impl ComBinlogDumpGtid {
     /// Creates new instance with default values for `pos`, `data` and `flags` fields.
-    pub fn new(server_id: u32, filename: Vec<u8>) -> Self {
+    pub fn new(server_id: u32) -> Self {
         Self {
             pos: 0,
-            flags: 0,
+            flags: BinlogDumpFlags::empty(),
             server_id,
-            filename,
+            filename: vec![],
             sid_blocks: Default::default(),
         }
     }
@@ -1956,12 +1921,18 @@ impl ComBinlogDumpGtid {
 
     /// Returns parsed `flags` field with unknown bits truncated.
     pub fn get_flags(&self) -> BinlogDumpFlags {
-        BinlogDumpFlags::from_bits_truncate(self.flags)
+        self.flags
+    }
+
+    /// Defines filename for this instance.
+    pub fn with_filename(mut self, filename: Vec<u8>) -> Self {
+        self.filename = filename;
+        self
     }
 
     /// Defines flags for this instance.
     pub fn with_flags(mut self, flags: BinlogDumpFlags) -> Self {
-        self.flags = flags.bits();
+        self.flags = flags;
         self
     }
 
@@ -1972,8 +1943,11 @@ impl ComBinlogDumpGtid {
     }
 
     /// Adds SID block to this instance.
-    pub fn with_sid_block(mut self, block: SidBlock) -> Self {
-        self.sid_blocks.push(block);
+    pub fn with_sid_blocks<T>(mut self, sid_blocks: T) -> Self
+    where
+        T: IntoIterator<Item = SidBlock>,
+    {
+        self.sid_blocks = sid_blocks.into_iter().collect();
         self
     }
 
@@ -2002,7 +1976,7 @@ impl ComBinlogDumpGtid {
         let filename_len = min(u32::MAX as usize, self.filename.len());
 
         output.write_u8(Command::COM_BINLOG_DUMP_GTID as u8)?;
-        output.write_u16::<LE>(self.flags)?;
+        output.write_u16::<LE>(self.flags.bits())?;
         output.write_u32::<LE>(self.server_id)?;
         output.write_u32::<LE>(filename_len as u32)?;
         output.write_all(&self.filename[..filename_len])?;
@@ -2060,31 +2034,12 @@ impl ComBinlogDumpGtid {
         }
 
         Ok(Self {
-            flags,
+            flags: BinlogDumpFlags::from_bits_truncate(flags),
             server_id,
             filename,
             pos,
             sid_blocks,
         })
-    }
-}
-
-impl fmt::Debug for ComBinlogDumpGtid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComBinlogDumpGtid")
-            .field("pos", &self.pos)
-            .field("flags", &{
-                let flags = self.flags;
-                format!(
-                    "{:?} (Unknown flags: {:016b})",
-                    flags,
-                    self.flags & (u16::MAX ^ BinlogDumpFlags::all().bits())
-                )
-            })
-            .field("server_id", &self.server_id)
-            .field("filename", &self.get_filename())
-            .field("sid_blocks", &self.sid_blocks)
-            .finish()
     }
 }
 
@@ -2141,8 +2096,8 @@ mod test {
             pos: u32,
             flags: u16,
         ) {
-            let mut cmd = ComBinlogDump::new(server_id, filename).with_pos(pos);
-            cmd.flags = flags;
+            let mut cmd = ComBinlogDump::new(server_id).with_filename(filename).with_pos(pos);
+            cmd.flags = crate::packets::BinlogDumpFlags::from_bits_truncate(flags);
 
             let mut output = Vec::new();
             cmd.write(&mut output)?;
@@ -2160,11 +2115,13 @@ mod test {
             replication_rank: u32,
             master_id: u32,
         ) {
+            use crate::misc::RawText;
+
             let cmd = ComRegisterSlave {
                 server_id,
-                hostname: hostname.as_bytes().to_vec(),
-                user: user.as_bytes().to_vec(),
-                password: password.as_bytes().to_vec(),
+                hostname: RawText(hostname.as_bytes().to_vec()),
+                user: RawText(user.as_bytes().to_vec()),
+                password: RawText(password.as_bytes().to_vec()),
                 port,
                 replication_rank,
                 master_id,
@@ -2189,18 +2146,21 @@ mod test {
             server_id: u32,
             filename: Vec<u8>,
             pos: u64,
-            sid_blocks in 0_u64..1024,
+            n_sid_blocks in 0_u64..1024,
         ) {
-            let mut cmd = ComBinlogDumpGtid::new(server_id, filename).with_pos(pos);
-            cmd.flags = flags;
+            let mut cmd = ComBinlogDumpGtid::new(server_id).with_filename(filename).with_pos(pos);
+            cmd.flags = crate::packets::BinlogDumpFlags::from_bits_truncate(flags);
 
-            for i in 0..sid_blocks {
+            let mut sid_blocks = Vec::new();
+            for i in 0..n_sid_blocks {
                 let mut block = SidBlock::new([i as u8; 16]);
                 for j in 0..i {
                     block = block.with_interval((i, j));
                 }
-                cmd = cmd.with_sid_block(block);
+                sid_blocks.push(block);
             }
+
+            cmd = cmd.with_sid_blocks(sid_blocks);
 
             let mut output = Vec::new();
             cmd.write(&mut output)?;

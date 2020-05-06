@@ -420,6 +420,8 @@ mod test {
 
     #[cfg(feature = "nightly")]
     mod benches {
+        use std::convert::TryFrom;
+
         use crate::{
             constants::ColumnType,
             io::WriteMysqlExt,
@@ -519,7 +521,7 @@ mod test {
             let meta_len = values.len() * 2;
             let columns = body[meta_offset..(meta_offset + meta_len)]
                 .chunks(2)
-                .map(|meta| col("foo", ColumnType::from(meta[0])))
+                .map(|meta| col("foo", ColumnType::try_from(meta[0]).unwrap()))
                 .collect::<Vec<_>>();
 
             let mut data = vec![0x00];
