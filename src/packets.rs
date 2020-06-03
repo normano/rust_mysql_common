@@ -32,13 +32,6 @@ use crate::{
     value::{ClientSide, SerializationSide, Value},
 };
 
-macro_rules! get_offset_and_len {
-    ($buffer:expr, $slice:expr) => {{
-        let val = $slice;
-        (val.as_ptr() as usize - $buffer.as_ptr() as usize, val.len())
-    }};
-}
-
 lazy_static::lazy_static! {
     static ref MARIADB_VERSION_RE: Regex =
         { Regex::new(r"^5.5.5-(\d{1,2})\.(\d{1,2})\.(\d{1,3})-MariaDB").unwrap() };
@@ -47,13 +40,12 @@ lazy_static::lazy_static! {
 
 /// Represents MySql Column (column packet).
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Column {
-    payload: Vec<u8>,
-    schema: (usize, usize),
-    table: (usize, usize),
-    org_table: (usize, usize),
-    name: (usize, usize),
-    org_name: (usize, usize),
+pub struct Column<'a> {
+    schema: Cow<'a, [u8]>,
+    table: Cow<'a, [u8]>,
+    org_table: Cow<'a, [u8]>,
+    name: Cow<'a, [u8]>,
+    org_name: Cow<'a, [u8]>,
     column_length: u32,
     character_set: u16,
     flags: ColumnFlags,
@@ -61,51 +53,108 @@ pub struct Column {
     decimals: u8,
 }
 
-/// Converts column-packet payload to an instance of `Column` structure.
-pub fn column_from_payload(payload: Vec<u8>) -> io::Result<Column> {
-    Column::from_payload(payload)
-}
-
-impl Column {
-    /// Converts column-packet payload to an instance of `Column` structure.
-    fn from_payload(payload: Vec<u8>) -> io::Result<Column> {
-        let schema;
-        let table;
-        let org_table;
-        let name;
-        let org_name;
-        let character_set;
-        let column_length;
-        let column_type;
-        let flags;
-        let decimals;
-
-        {
-            // Skip "def"
-            let mut reader = &payload[4..];
-            schema = get_offset_and_len!(payload, read_lenenc_str!(&mut reader)?);
-            table = get_offset_and_len!(payload, read_lenenc_str!(&mut reader)?);
-            org_table = get_offset_and_len!(payload, read_lenenc_str!(&mut reader)?);
-            name = get_offset_and_len!(payload, read_lenenc_str!(&mut reader)?);
-            org_name = get_offset_and_len!(payload, read_lenenc_str!(&mut reader)?);
-            reader = &reader[1..];
-            character_set = reader.read_u16::<LE>()?;
-            column_length = reader.read_u32::<LE>()?;
-            column_type = reader.read_u8()?;
-            flags = reader.read_u16::<LE>()?;
-            decimals = reader.read_u8()?;
+impl<'a> Column<'a> {
+    pub fn new(column_type: ColumnType) -> Self {
+        Self {
+            schema: Default::default(),
+            table: Default::default(),
+            org_table: Default::default(),
+            name: Default::default(),
+            org_name: Default::default(),
+            column_length: Default::default(),
+            character_set: Default::default(),
+            flags: ColumnFlags::empty(),
+            column_type,
+            decimals: Default::default(),
         }
+    }
+
+    pub fn into_owned(self) -> Column<'static> {
+        Column {
+            schema: self.schema.into_owned().into(),
+            table: self.table.into_owned().into(),
+            org_table: self.org_table.into_owned().into(),
+            name: self.name.into_owned().into(),
+            org_name: self.org_name.into_owned().into(),
+            column_length: self.column_length,
+            character_set: self.character_set,
+            flags: self.flags,
+            column_type: self.column_type,
+            decimals: self.decimals,
+        }
+    }
+
+    pub fn with_schema(mut self, schema: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.schema = schema.into();
+        self
+    }
+
+    pub fn with_table(mut self, table: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.table = table.into();
+        self
+    }
+
+    pub fn with_org_table(mut self, org_table: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.org_table = org_table.into();
+        self
+    }
+
+    pub fn with_name(mut self, name: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    pub fn with_org_name(mut self, org_name: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.org_name = org_name.into();
+        self
+    }
+
+    pub fn with_flags(mut self, flags: ColumnFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    pub fn with_column_length(mut self, column_length: u32) -> Self {
+        self.column_length = column_length;
+        self
+    }
+
+    pub fn with_character_set(mut self, character_set: u16) -> Self {
+        self.character_set = character_set;
+        self
+    }
+
+    pub fn with_decimals(mut self, decimals: u8) -> Self {
+        self.decimals = decimals;
+        self
+    }
+
+    pub fn read<T: io::Read>(mut input: T) -> io::Result<Column<'static>> {
+        input.read_lenenc_str()?; // "def"
+        let schema = input.read_lenenc_str()?;
+        let table = input.read_lenenc_str()?;
+        let org_table = input.read_lenenc_str()?;
+        let name = input.read_lenenc_str()?;
+        let org_name = input.read_lenenc_str()?;
+        input.read_u8()?; // 0x0c
+        let character_set = input.read_u16::<LE>()?;
+        let column_length = input.read_u32::<LE>()?;
+        let column_type = input.read_u8()?;
+        let flags = input.read_u16::<LE>()?;
+        let decimals = input.read_u8()?;
+        input.read_u16::<LE>()?; // [0x00, 0x00]
 
         Ok(Column {
-            schema,
-            table,
-            org_table,
-            name,
-            org_name,
-            payload,
+            schema: schema.into(),
+            table: table.into(),
+            org_table: org_table.into(),
+            name: name.into(),
+            org_name: org_name.into(),
             column_length,
             character_set,
-            flags: ColumnFlags::from_bits_truncate(flags),
+            flags: ColumnFlags::from_bits(flags).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid column flags")
+            })?,
             column_type: ColumnType::try_from(column_type)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid column type"))?,
             decimals,
@@ -139,7 +188,7 @@ impl Column {
 
     /// Returns value of the schema field of a column packet as a byte slice.
     pub fn schema_ref(&self) -> &[u8] {
-        &self.payload[self.schema.0..self.schema.0 + self.schema.1]
+        self.schema.as_ref()
     }
 
     /// Returns value of the schema field of a column packet as a string (lossy converted).
@@ -149,7 +198,7 @@ impl Column {
 
     /// Returns value of the table field of a column packet as a byte slice.
     pub fn table_ref(&self) -> &[u8] {
-        &self.payload[self.table.0..self.table.0 + self.table.1]
+        self.table.as_ref()
     }
 
     /// Returns value of the table field of a column packet as a string (lossy converted).
@@ -161,7 +210,7 @@ impl Column {
     ///
     /// "org_table" is for original table name.
     pub fn org_table_ref(&self) -> &[u8] {
-        &self.payload[self.org_table.0..self.org_table.0 + self.org_table.1]
+        self.org_table.as_ref()
     }
 
     /// Returns value of the org_table field of a column packet as a string (lossy converted).
@@ -171,7 +220,7 @@ impl Column {
 
     /// Returns value of the name field of a column packet as a byte slice.
     pub fn name_ref(&self) -> &[u8] {
-        &self.payload[self.name.0..self.name.0 + self.name.1]
+        self.name.as_ref()
     }
 
     /// Returns value of the name field of a column packet as a string (lossy converted).
@@ -183,7 +232,7 @@ impl Column {
     ///
     /// "org_name" is for original column name.
     pub fn org_name_ref(&self) -> &[u8] {
-        &self.payload[self.org_name.0..self.org_name.0 + self.org_name.1]
+        self.org_name.as_ref()
     }
 
     /// Returns value of the org_name field of a column packet as a string (lossy converted).
@@ -2280,7 +2329,7 @@ mod test {
     fn should_parse_column_packet() {
         const COLUMN_PACKET: &[u8] = b"\x03def\x06schema\x05table\x09org_table\x04name\
               \x08org_name\x0c\x21\x00\x0F\x00\x00\x00\x00\x01\x00\x08\x00\x00";
-        let column = column_from_payload(COLUMN_PACKET.into()).unwrap();
+        let column = Column::read(COLUMN_PACKET).unwrap();
         assert_eq!(column.schema_str(), "schema");
         assert_eq!(column.table_str(), "table");
         assert_eq!(column.org_table_str(), "org_table");

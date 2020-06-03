@@ -50,6 +50,9 @@
 //! [1]: https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
 #![cfg_attr(feature = "nightly", feature(test, const_fn))]
 
+#[cfg(all(not(feature = "test"), test))]
+compile_error!("Please invoke `cargo test` with `--features test` flags");
+
 #[cfg(feature = "nightly")]
 extern crate test;
 
