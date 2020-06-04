@@ -80,6 +80,8 @@ pub fn read_bin_value<T: io::Read>(
 }
 
 /// Reads value in binlog format.
+///
+/// `column_type` myst be the real type (extracted from metadata, if needed).
 pub fn read_binlog_value<T: io::Read>(
     input: T,
     column_type: ColumnType,
@@ -233,6 +235,9 @@ impl Value {
         Ok(output)
     }
 
+    /// Reads a Value from binary log row.
+    ///
+    /// `column_type` myst be the real type (extracted from metadata, if needed).
     fn read_binlog<T: io::Read>(
         mut input: T,
         mut column_type: ColumnType,

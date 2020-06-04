@@ -3281,9 +3281,10 @@ impl<'a> Iterator for RowsEventRows<'a> {
             for i in 0..(num_columns as usize) {
                 // check if column is in columns list
                 if cols.get(i).copied().unwrap_or(false) {
-                    let column_type = tme.columns_type.get(i);
+                    let raw_column_type = tme.columns_type.get(i);
+
                     // TableMapEvent must define column type for the current column.
-                    let column_type = match column_type {
+                    let raw_column_type = match raw_column_type {
                         Some(ty) => ty,
                         None => {
                             return Err(io::Error::new(
@@ -3294,7 +3295,7 @@ impl<'a> Iterator for RowsEventRows<'a> {
                     };
 
                     // Column type must be known.
-                    let column_type = match column_type {
+                    let raw_column_type = match raw_column_type {
                         Ok(ty) => ty,
                         Err(_) => {
                             return Err(io::Error::new(
@@ -3302,6 +3303,22 @@ impl<'a> Iterator for RowsEventRows<'a> {
                                 "Unknown column type",
                             ))
                         }
+                    };
+
+                    let column_meta = tme.get_column_metadata(i).unwrap_or(&[]);
+                    let column_type = match raw_column_type {
+                        ColumnType::MYSQL_TYPE_STRING => {
+                            let real_type = column_meta[0];
+                            if real_type == ColumnType::MYSQL_TYPE_ENUM as u8
+                                || real_type == ColumnType::MYSQL_TYPE_SET as u8
+                            {
+                                ColumnType::try_from(real_type).unwrap_or(raw_column_type)
+                            } else {
+                                raw_column_type
+                            }
+                        }
+                        ColumnType::MYSQL_TYPE_DATE => ColumnType::MYSQL_TYPE_NEWDATE,
+                        other => other,
                     };
 
                     let unsigned = signedness.get(i).copied().unwrap_or_default();
