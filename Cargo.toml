@@ -18,7 +18,7 @@ travis-ci = { repository = "blackbeam/rust_mysql_common" }
 [dependencies]
 base64 = "0.12"
 bigdecimal = { version = "0.1", features = ["serde"] }
-bitflags = "1"
+bitflags = "^1"
 bitvec = "0.17.4"
 byteorder = "1"
 bytes = "0.5.2"
@@ -43,13 +43,13 @@ serde = "1"
 serde_json = "1"
 
 [dev-dependencies]
-proptest = "0.9.2"
+proptest = "^0.9"
 
 [build-dependencies]
-bindgen = "0.54.0"
-cc = "1.0.54"
-cmake = "0.1.44"
-subprocess = "0.2.4"
+bindgen = "^0"
+cc = "^1"
+cmake = "^0"
+subprocess = "^0"
 
 [profile.bench]
 debug = true
